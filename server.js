@@ -5,7 +5,7 @@ const { Server: WebSocketServer } = require('ws');
 const usbDetect = require('usb-detection');
 const printers = require('@agsolutions-at/printers');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
-
+const spooler = require('./spooler'); 
 // Create Express app and static file server
 const app = express();
 app.use(express.static('public'));  // serve UI files
@@ -34,51 +34,34 @@ function updateStatus() {
   broadcast({ type: 'status', connected });
 }
 
-// Convert PNG buffer to a single-page PDF buffer
-async function pngToPdf(pngBytes) {
-  const pdfDoc = await PDFDocument.create();
-  // Embed the PNG image
-  const pngImage = await pdfDoc.embedPng(pngBytes);
-  // Create a page that fits the image dimensions (convert px to points, assuming 96 DPI)
-  const width = pngImage.width;
-  const height = pngImage.height;
-  const page = pdfDoc.addPage([width, height]);
-  // Draw image covering the page
-  page.drawImage(pngImage, { x: 0, y: 0, width, height });
-  const pdfBytes = await pdfDoc.save();
-  return pdfBytes;
-}
 
+// Notify UI whenever the queue changes
+spooler.setStatusCallback(() => {
+  const queue = spooler.getQueue();
+  broadcast({ type: 'queue', jobs: queue });
+});
 // Handle incoming WebSocket connections
 wss.on('connection', ws => {
   // Send initial printer status on connect
   updateStatus();
 
   ws.on('message', async (msg) => {
-    try {
-      const data = JSON.parse(msg);
-      if (data.type === 'print' && Array.isArray(data.images)) {
-        // Received print job (array of base64 PNGs)
-        for (let base64png of data.images) {
-          // Convert base64 to buffer
-          const pngBuffer = Buffer.from(base64png, 'base64');
-          // Preview: broadcast image to UI clients
-          broadcast({ type: 'image', image: base64png });
-          // Convert to PDF for printing
-          const pdfBuffer = await pngToPdf(pngBuffer);
-          // Send to printer
-          const available = printers.getPrinters();
-          if (available.length === 0) {
-            console.error('No printers available');
-            continue;
-          }
-          const printerName = available[0].name;  // use first detected printer
-          printers.print(printerName, pdfBuffer, 'Label Print', []);
-        }
+  try {
+    const data = JSON.parse(msg);
+    if (data.type === 'print' && Array.isArray(data.images)) {
+      for (let base64png of data.images) {
+        // Broadcast image preview to UI
+        broadcast({ type: 'image', image: base64png });
+        // Add to spooler queue
+        spooler.addJob(base64png);
       }
-    } catch (err) {
-      console.error('Error handling message:', err);
     }
+  } catch (err) {
+    console.error('Error handling message:', err);
+  }
+});
+  ws.on('close', () => {
+    console.log('Client disconnected');
   });
 });
 
