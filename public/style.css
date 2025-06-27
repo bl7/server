@@ -1,0 +1,4 @@
+/* public/style.css */
+body { font-family: Arial, sans-serif; margin: 20px; }
+#status { margin-bottom: 10px; }
+#preview img { margin: 5px; max-height: 150px; border: 1px solid #ccc; }
